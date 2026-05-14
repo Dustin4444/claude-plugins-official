@@ -1365,7 +1365,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/PagerDuty/claude-code-plugins.git",
-        "sha": "b16c23e0d790deceaa7a6182616d0e36673f2eae"
+        "sha": "761cba75bd50fd561405c3b173ecf36084432089"
       },
       "homepage": "https://github.com/PagerDuty/claude-code-plugins"
     },
