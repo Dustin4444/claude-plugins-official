@@ -1241,7 +1241,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/mintlify/mintlify-claude-plugin.git",
-        "sha": "0436f38141238860186f48d9918c39bc94fe5b59"
+        "sha": "acd6d2e0128c4f235d55cfb8d8c91ecbdd5df8cc"
       },
       "homepage": "https://www.mintlify.com/"
     },
@@ -1308,16 +1308,12 @@
         "url": "https://github.com/oracle/netsuite-suitecloud-sdk.git",
         "path": "packages/agent-skills",
         "ref": "master",
-        "sha": "79947b37a42dcc7d5b00835655fa14a368b5ea17"
+        "sha": "43bacf43763e1eedd0892b4652be3d45df94f0e7"
       },
       "strict": false,
       "skills": [
         "./netsuite-ai-connector-instructions",
-        "./netsuite-owasp-secure-coding",
-        "./netsuite-sdf-project-documentation",
         "./netsuite-sdf-roles-and-permissions",
-        "./netsuite-suitescript-records-reference",
-        "./netsuite-suitescript-upgrade",
         "./netsuite-uif-spa-reference"
       ],
       "homepage": "https://github.com/oracle/netsuite-suitecloud-sdk"
