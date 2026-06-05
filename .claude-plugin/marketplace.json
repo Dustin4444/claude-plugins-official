@@ -688,6 +688,20 @@
       "homepage": "https://cloud.google.com/sql"
     },
     {
+      "name": "cloud-sql-sqlserver",
+      "description": "Connect to Cloud SQL for SQL Server",
+      "author": {
+        "name": "Google LLC"
+      },
+      "category": "database",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/gemini-cli-extensions/cloud-sql-sqlserver.git",
+        "sha": "8e1490ec8f659a5711655d2fa4241597a63d4883"
+      },
+      "homepage": "https://github.com/gemini-cli-extensions/cloud-sql-sqlserver"
+    },
+    {
       "name": "cloudflare",
       "source": {
         "source": "url",
