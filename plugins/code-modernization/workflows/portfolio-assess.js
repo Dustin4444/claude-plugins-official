@@ -82,17 +82,22 @@ if (failed.length) {
 }
 
 // COCOMO-II basic, computed here so every row uses the identical formula:
-// PM = 2.94 × (KSLOC)^1.10 (nominal scale factors).
+// 2.94 × (KSLOC)^1.10 (nominal scale factors). This is a RELATIVE
+// complexity/scale index for ranking systems — NOT a duration or cost.
+// The calling command must render it as an index and never convert it to
+// person-months / weeks / dates (agentic transformation breaks COCOMO's
+// human-team productivity assumptions).
 for (const r of surveyed) {
   const ksloc = r.sloc / 1000
-  r.cocomoPm = Math.round(2.94 * Math.pow(ksloc, 1.1) * 10) / 10
+  r.complexityIndex = Math.round(2.94 * Math.pow(ksloc, 1.1) * 10) / 10
 }
 
-surveyed.sort((a, b) => b.cocomoPm - a.cocomoPm)
+surveyed.sort((a, b) => b.complexityIndex - a.complexityIndex)
 
 return {
   parentDir,
   rows: surveyed,
   unmeasured: failed,
-  formula: 'PM = 2.94 × (KSLOC)^1.10 (COCOMO-II basic, nominal scale factors) — computed by the workflow, not estimated by agents',
+  complexityIndexFormula:
+    '2.94 × (KSLOC)^1.10 (COCOMO-II basic, nominal scale factors) — a RELATIVE complexity/scale index for ranking systems, computed by the workflow. NOT a duration or cost: do not render it as person-months/weeks/dates; agentic transformation does not follow COCOMO human-team productivity.',
 }

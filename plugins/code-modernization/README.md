@@ -40,7 +40,7 @@ to direct subagent fan-out on older builds — no configuration needed.
 |---|---|
 | `/modernize-extract-rules` | Extraction loops until two consecutive rounds find nothing new; every rule's `file:line` citation is verified by an independent referee before entering the catalog; P0 rules face a two-judge panel before they can anchor the behavior contract. |
 | `/modernize-harden` | Five class-scoped finders in parallel; every finding is adversarially refuted (Critical/High double-judged), so false positives die before `SECURITY_FINDINGS.md`. |
-| `/modernize-assess --portfolio` | One survey agent per system, pipelined independently; COCOMO computed uniformly in code; crashed sweeps resume from cache. |
+| `/modernize-assess --portfolio` | One survey agent per system, pipelined independently; the COCOMO complexity index computed uniformly in code; crashed sweeps resume from cache. |
 | `/modernize-reimagine` (Phase E) | The 3-service scaffolding cap is lifted — the runtime queues one agent per approved service. |
 
 These fan out more agents than the fallback path (tens, on a large estate) —
@@ -86,7 +86,9 @@ The commands are designed to be run in order, but each produces a standalone art
 Environment readiness check, meant to run first: detects the legacy stack, checks analysis tooling, **smoke-compiles a real source file** with the legacy toolchain (the errors this surfaces — missing copybooks, wrong dialect flags — are the ones that otherwise appear mid-transform), inventories missing includes / deployment descriptors / binary-only artifacts, and probes for telemetry. Produces `analysis/<system>/PREFLIGHT.md` with a per-command Ready / Ready-with-gaps / Not-ready verdict.
 
 ### `/modernize-assess <system-dir>`  — or — `/modernize-assess --portfolio <parent-dir>`
-Inventory the legacy codebase: languages, line counts, complexity, build system, integrations, technical debt, security posture, documentation gaps, and a COCOMO-derived effort estimate. Produces `analysis/<system>/ASSESSMENT.md` and `analysis/<system>/ARCHITECTURE.mmd`. Spawns `legacy-analyst` (×2) and `security-auditor` in parallel for deep reads. With `--portfolio`, sweeps every subdirectory of a parent directory and writes a sequencing heat-map to `analysis/portfolio.html`.
+Inventory the legacy codebase: languages, line counts, complexity, build system, integrations, technical debt, security posture, documentation gaps, and a COCOMO-derived **relative complexity index** (a size/scale signal for ranking systems — explicitly *not* a modernization timeline or cost; see "A note on COCOMO" below). Produces `analysis/<system>/ASSESSMENT.md` and `analysis/<system>/ARCHITECTURE.mmd`. Spawns `legacy-analyst` (×2) and `security-auditor` in parallel for deep reads. With `--portfolio`, sweeps every subdirectory of a parent directory and writes a sequencing heat-map to `analysis/portfolio.html`.
+
+> **A note on COCOMO.** Both `assess` modes derive a COCOMO-II figure from code size. This plugin uses it **only as a relative complexity/scale index** — to rank and sequence systems and to size the legacy estate. It is deliberately **not** presented as a modernization timeline or cost, and the commands are instructed never to convert it to person-months, weeks, dates, or dollars. COCOMO's constants encode historical human-team productivity; agentic transformation does not follow those curves, so any duration derived from it would be wrong. If you have a better intrinsic-complexity proxy (cyclomatic-complexity density, coupling/fan-out, the topology's edge density, or the count of extracted P0 business rules), prefer it — COCOMO is the portable default, not the ceiling.
 
 ### `/modernize-map <system-dir>`
 

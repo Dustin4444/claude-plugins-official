@@ -27,7 +27,7 @@ used for, and what degrades without it:
 
 | Tool | Used by | Without it |
 |---|---|---|
-| `scc` (or `cloc`) | assess | LOC/complexity fall back to `find`+`wc`; COCOMO estimate gets coarser |
+| `scc` (or `cloc`) | assess | LOC/complexity fall back to `find`+`wc`; the COCOMO complexity index gets coarser |
 | `lizard` | assess --portfolio | complexity estimated from decision-keyword counts |
 | `glow` | all | markdown artifacts render as plain text |
 | `delta` | transform | side-by-side diffs fall back to `diff -y` |
