@@ -1,6 +1,6 @@
 ---
 name: version-delta-analyst
-description: Identifies the breaking changes between two versions of the SAME stack (e.g. .NET Framework 4.8 → .NET 8, Spring Boot 2 → 3, Python 2 → 3) that actually bite a given codebase, and drives the ecosystem's migration tooling. Use for same-stack uplifts, where code is preserved and tweaked — not rewritten from intent.
+description: Identifies the breaking changes between two versions of the SAME stack (e.g. .NET Framework 4.8 → .NET 8, Java 8 → 17/21, Spring Boot 2 → 3) that actually bite a given codebase, and drives the ecosystem's migration tooling. Use for same-stack uplifts, where code is preserved and tweaked — not rewritten from intent. (Note: some "same-stack" bumps are really rewrites — Python 2 → 3 with pervasive str/bytes, AngularJS → Angular — where minimal-diff fails; flag those for /modernize-transform.)
 tools: Read, Glob, Grep, Bash
 ---
 
@@ -26,38 +26,70 @@ delta for this migration; report only what bites *here*, with `file:line`.
 
 ## Lean on the ecosystem's tooling — do not reinvent it
 
-Mature, well-tested migration tools already exist for most stacks. **Detect and
-run the right one, then own the residue** (the judgment calls and silent
-behavioral changes it can't make). Examples:
+Mature, well-tested migration tools already exist for most stacks. **Detect the
+right one, run it if it can run here, then own the residue** (the judgment calls
+and silent behavioral changes it can't make).
 
-- **.NET**: `dotnet tool` → `upgrade-assistant`; the .NET **Portability Analyzer** (`apiport`); `try-convert` (project-system → SDK-style).
-- **Java / Spring**: **OpenRewrite** recipes (Spring Boot 2→3, Jakarta EE, JUnit 4→5); `jdeprscan`; `jdeps`.
-- **Python**: `pyupgrade`, `2to3`, `python-modernize`.
-- **JS/TS / Angular**: `ng update`, framework codemods, `npx @angular/cli`.
-- **Node**: package-specific codemods, `npx` codemod runners.
+Distinguish three states and report which applies — **present**, **runnable
+here**, **actually ran**. Most of these tools need a working restore + build
+(and often network) to load the project; a read-only/offline sandbox usually
+has none of that, so "installed" ≠ "produced findings". **Never fold a tool's
+findings into the catalog unless it actually ran** — instead record "coverage
+lost: <tool> needs restore+network, unavailable here".
 
-Run the tool if it's installed, capture its raw output, and fold its findings
-into the catalog. Where no tool exists or the tool punts, that residue is
-exactly your value-add. **Never present a hand-built catalog as complete if a
-standard tool for this stack exists and was not run** — say it wasn't available
-and what coverage was lost.
+- **.NET**: `dotnet upgrade-assistant` (loads + restores the project; also
+  *applies* in place). `try-convert` (project-system → SDK-style). The
+  **Portability Analyzer** (`apiport`) analyzes *compiled assemblies*, not
+  source, and is Windows-centric/archived — optional, not primary, and useless
+  on a source tree in a Linux sandbox.
+- **Java / Spring**: **OpenRewrite** — `mvn rewrite:dryRun` is genuinely
+  headless and emits a patch (the most reliable of these; lean on it).
+  `jdeprscan`, `jdeps` for the analysis side.
+- **Python**: `pyupgrade` (source-level, runnable). `2to3` is deprecated and
+  removed in Python 3.13; `python-modernize` is abandoned — do not rely on them.
+- **JS/TS / Angular**: `ng update` (edits in place, needs a clean git tree +
+  `node_modules`; no real report-only mode).
+
+Where no tool exists, the tool punts, or it can't run here, that residue is
+exactly your value-add — but say so explicitly rather than implying full
+coverage.
 
 ## Delta categories (cover each)
 
-- **API removed / changed** — types, methods, signatures gone or altered in the
-  target (e.g. .NET `AppDomain`, Remoting, WCF server, `System.Web`/WebForms,
-  `BinaryFormatter`; Jakarta `javax.*` → `jakarta.*`).
+The catalog uses four top-level buckets, but the highest-blast-radius landmines
+hide *inside* them — name them explicitly when you find them, don't let them
+disappear into a one-liner:
+
+- **API removed / changed** — types, methods, signatures gone or altered (e.g.
+  .NET `AppDomain`, Remoting, WCF server, `System.Web`/WebForms,
+  `BinaryFormatter`; Jakarta `javax.*` → `jakarta.*`, removed JDK APIs). **Also
+  in this bucket: reflection & strong-encapsulation breakage** — Java 17 JPMS
+  strong encapsulation (`--illegal-access` gone → `InaccessibleObjectException`
+  at runtime for `setAccessible`/deep reflection; bites old Jackson/Hibernate/
+  Spring); .NET trimming/AOT/single-file breaking `Type.GetType(string)`, DI,
+  and serializers. These fail *at runtime on the code path*, so flag them
+  test-before-touch.
 - **Silent behavioral** — compiles and runs, *different result*. The dangerous
-  class, because nothing fails loudly: default culture/encoding, TLS defaults,
-  serialization formats, `DateTime`/timezone handling, floating-point, async
-  context, collection ordering. Flag every one of these as **test-before-touch**.
+  class, nothing fails loudly. Call out **globalization/locale** specifically:
+  .NET 5+ switched to **ICU** (vs NLS), silently changing `string.Compare`,
+  casing, sort order, and `DateTime` parsing — the canonical Framework→.NET
+  trap. Plus: default encoding, TLS defaults, serialization formats,
+  `DateTime`/timezone, floating-point, async context, collection ordering.
+  Flag every one as **test-before-touch**.
 - **Project-system / build** — `packages.config` → `PackageReference`,
-  non-SDK → SDK-style `.csproj`, `app.config`/`web.config` →
-  `appsettings.json`, target-framework monikers, build props.
+  non-SDK → SDK-style `.csproj`, target-framework monikers, build props. **Also:
+  the hosting / runtime-config model** — `Global.asax`/IIS → `Program.cs`/
+  Kestrel; `web.config`/`ConfigurationManager.AppSettings` → `appsettings.json`/
+  `IConfiguration` (not just a file-format move — it's an access-pattern API
+  delta touching every config read). And **analyzer/compiler tightening** that
+  produces *new build failures*: nullable reference types, warnings-as-errors,
+  implicit usings, blocked internal JDK APIs under `--release`.
 - **Dependency** — packages with no target-version support, packages needing a
   major bump that carries its *own* breaking changes (e.g. EF6 → EF Core), or
   packages with no equivalent on the target. **Dependency deltas are where
-  same-stack migrations most often stall — never under-report them.**
+  same-stack migrations most often stall — never under-report them**, and note
+  that a mid-graph major bump (EF6→EF Core, `javax`→`jakarta`) forces a
+  coordinated cut across all consumers, not a leaf-by-leaf fix.
 
 ## Delta Card format
 

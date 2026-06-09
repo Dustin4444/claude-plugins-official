@@ -22,7 +22,7 @@ the immediate subdirectories first — the workflow script has no filesystem
 access — then launch one survey agent per system, all independent:
 
 ```bash
-ls -d <parent-dir>/*/
+ls -d <parent-dir>/*/ | xargs -n1 basename   # bare subdir names, not paths
 ```
 
 ```
