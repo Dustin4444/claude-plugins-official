@@ -32,7 +32,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-plugins-community/.github/actions/validate-plugins@5d75f9912fedf8609e56fa7c7f9d717581c98a3d
+      - uses: anthropics/claude-plugins-community/.github/actions/validate-plugins@d207465eb6ec02b6f3f1dbb131717830dc9ecc68
         with:
           marketplace-path: .claude-plugin/marketplace.json
           # Official curated marketplace: SHA-pin (I5) is a HARD error.
