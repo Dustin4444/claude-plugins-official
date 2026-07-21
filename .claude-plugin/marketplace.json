@@ -587,6 +587,20 @@
       "homepage": "https://www.canva.com"
     },
     {
+      "name": "carbone-skill",
+      "description": "Official Carbone skill — complete templating language reference covering tags, loops, conditions, formatters, aggregators, and all output formats (DOCX, XLSX, PPTX, ODT, HTML, Markdown, PDF)",
+      "author": {
+        "name": "Carbone"
+      },
+      "category": "productivity",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/carboneio/carbone-skill.git",
+        "sha": "52cd97e4ff35490440c066822739e466fab47901"
+      },
+      "homepage": "https://carbone.io"
+    },
+    {
       "name": "carta-cap-table",
       "description": "Carta Cap Table plugin — skills and hooks for querying cap tables, grants, SAFEs, 409A valuations, waterfall scenarios, and more",
       "author": {
