@@ -3224,6 +3224,22 @@
       "homepage": "https://github.com/spotify/ads-claude-plugin"
     },
     {
+      "name": "stackhawk-hawkscan",
+      "description": "Configure, run, and interpret HawkScan DAST results inside Claude Code. Generates stackhawk.yml configs, runs scans via CLI or Docker, and transforms security findings into prioritized fix tasks for your coding agent.",
+      "author": {
+        "name": "StackHawk"
+      },
+      "category": "security",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/stackhawk/agent-skills.git",
+        "path": "plugins/hawkscan",
+        "ref": "main",
+        "sha": "248e3fedba8ff80fadfd17f72a0454aa02b66a0b"
+      },
+      "homepage": "https://docs.stackhawk.com/ai-security/"
+    },
+    {
       "name": "stackhawk-api",
       "description": "Query the StackHawk platform API for security posture reporting, findings analysis, and app management. Guides agents through authentication, data retrieval, and result presentation.",
       "author": {
