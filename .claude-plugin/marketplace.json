@@ -596,7 +596,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/box/skills.git",
-        "sha": "aa75770f645367778df215dcbebbeec0b7e05546"
+        "sha": "35567f913a2bfd7f8b59367c9df3ae14b5ad4cfe"
       },
       "skills": [
         "./skills/box",
