@@ -1,15 +1,17 @@
 import json
 import os
+import subprocess
 import threading
 import time
 
 import pytest
 
 from conftest import (
-    HOOKS_DIR, STUB_VULN, VULN_PY, bash_payload, commit_file, edit_payload, git,
-    make_repo, metrics_of, run_hook, stop_payload, ups_payload,
+    GIT_ENV, HOOKS_DIR, STUB_VULN, VULN_PY, bash_payload, commit_file, edit_payload,
+    git, make_repo, metrics_of, run_hook, stop_payload, ups_payload,
 )
 
+import gitutil
 import reporesolve as rr
 import security_reminder_hook as hook
 
@@ -206,6 +208,16 @@ class TestRegexes:
     def test_commit_re_negative(self, cmd):
         assert not hook._GIT_COMMIT_RE.search(cmd)
 
+    @pytest.mark.parametrize("unit", ['-c "a"', "-c 'a'", "--no-a=b", "--a=b=c=d", "--git-dir x"])
+    @pytest.mark.parametrize("regex,verb", [("_GIT_COMMIT_RE", "commit"), ("_GIT_PUSH_RE", "push")])
+    def test_global_option_prefix_is_linear(self, regex, verb, unit):
+        cre = getattr(hook, regex)
+        prefix = "git " + " ".join([unit] * 40)
+        t0 = time.perf_counter()
+        assert not cre.search(prefix + " " + verb + "foo")
+        assert time.perf_counter() - t0 < 0.05
+        assert cre.search(prefix + " " + verb + " -m x")
+
 
 class TestHooksJson:
     def test_matchers_and_events(self):
@@ -227,6 +239,13 @@ def _read_state(env):
     assert files, os.listdir(d)
     with open(files[0]) as f:
         return json.load(f)
+
+
+def _read_state_or_empty(env):
+    d = env["SECURITY_WARNINGS_STATE_DIR"]
+    if not any(e.name.endswith(".json") for e in os.scandir(d)):
+        return {}
+    return _read_state(env)
 
 
 class TestCommitReview:
@@ -288,6 +307,7 @@ class TestCommitReview:
         m = metrics_of(so)
         assert m.get("skip_reason") is None, m
         assert m["repo_resolution"] == rr.RES_SHA_SCAN and m["files_reviewed"] == 1
+        assert "repo_root_hint" not in _read_state_or_empty(hook_env)
 
     def test_workspace_cwd_sha_scan_via_project_dir(self, workspace, hook_env, tmp_path):
         ws, repo = workspace
@@ -368,6 +388,22 @@ class TestPushSweep:
         assert m.get("skip_reason") != 26
         assert m.get("pushed") == 1
 
+    def test_workspace_cwd_sha_scan_push_leaves_no_hint(self, workspace, hook_env, tmp_path):
+        ws, repo = workspace
+        remote = tmp_path / "remote.git"
+        git(ws, "init", "-q", "--bare", str(remote))
+        git(repo, "remote", "add", "origin", str(remote))
+        git(repo, "push", "-q", "-u", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").strip()
+        sha, _ = commit_file(repo, "app.py", VULN_PY)
+        git(repo, "push", "-q", "origin", "main")
+        push_stdout = f"To {remote}\n   {base[:7]}..{sha[:7]}  main -> main\n"
+        rc, so, se = run_hook(bash_payload(ws, "git push origin main", push_stdout), hook_env)
+        m = metrics_of(so)
+        assert m["push_sweep"] is True and m["repo_resolution"] == rr.RES_SHA_SCAN, m
+        assert m.get("skip_reason") != 26
+        assert "repo_root_hint" not in _read_state_or_empty(hook_env)
+
     def test_cwd_is_repo_dash_C_other_repo(self, workspace, hook_env, tmp_path):
         ws, repo = workspace
         other = make_repo(ws / "other")
@@ -424,6 +460,7 @@ class TestStop:
         assert after["touched_paths"] == before["touched_paths"] != []
         assert after.get("baseline_sha") == before.get("baseline_sha")
         assert after.get("reviewed_diff_hash")
+        assert "repo_root_hint" not in after
         n_calls = len(stub_api.calls)
         rc, so, se = run_hook(stop_payload(ws), hook_env)
         m2 = metrics_of(so)
@@ -501,6 +538,54 @@ class TestStop:
         m2 = metrics_of(so)
         assert m2.get("skip_reason") is None and m2["files_reviewed"] == 1, m2
 
+    def test_subagent_stop_in_other_worktree_from_workspace_cwd(self, workspace, hook_env, stub_api, tmp_path):
+        ws, repo = workspace
+        wt = tmp_path / "wt"
+        git(repo, "worktree", "add", "-q", "-b", "agent", str(wt))
+        run_hook(ups_payload(ws), hook_env)
+        (wt / "new.py").write_text("import pickle\npickle.loads(b)\n")
+        run_hook(edit_payload(ws, wt / "new.py", "x"), hook_env)
+        env = {**hook_env, "CLAUDE_PROJECT_DIR": str(repo)}
+        rc, so, se = run_hook(stop_payload(ws, event="SubagentStop"), env)
+        m = metrics_of(so)
+        assert m["skip_reason"] == 11 and m["repo_resolution"] == rr.RES_TOUCHED_PATHS, m
+        assert not stub_api.calls
+        assert "repo_root_hint" not in _read_state(hook_env)
+
+    def test_repository_config_cannot_run_programs(self, workspace, hook_env, stub_api, tmp_path):
+        ws, repo = workspace
+        marker = tmp_path / "marker"
+        mon = tmp_path / "mon.sh"
+        mon.write_text(f"#!/bin/sh\necho ran >> '{marker}'\n")
+        mon.chmod(0o755)
+        git(repo, "config", "core.fsmonitor", str(mon))
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+        subprocess.run(["git", "status"], cwd=repo, env={**clean, **GIT_ENV}, capture_output=True)
+        assert marker.exists()
+        marker.unlink()
+        run_hook(ups_payload(ws), hook_env)
+        self._touch(ws, repo, hook_env)
+        rc, so, se = run_hook(stop_payload(ws), hook_env)
+        m = metrics_of(so)
+        assert m.get("skip_reason") is None and m["files_reviewed"] == 1, m
+        assert not marker.exists()
+        sha, out = commit_file(repo, "app.py", VULN_PY + "z = 3\n")
+        marker.unlink(missing_ok=True)
+        rc, so, se = run_hook(bash_payload(ws, "cd sub && git commit -m change", out), hook_env)
+        assert metrics_of(so).get("files_reviewed") == 1
+        assert not marker.exists()
+
+    def test_safe_git_env_extends_existing_config_count(self):
+        base = {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": "1",
+                "GIT_CONFIG_KEY_1": "c.d", "GIT_CONFIG_VALUE_1": "2"}
+        env = gitutil.git_config_env(gitutil.SAFE_GIT_CONFIG, base=base)
+        assert env["GIT_CONFIG_COUNT"] == str(2 + len(gitutil.SAFE_GIT_CONFIG))
+        assert "GIT_CONFIG_KEY_0" not in env and "GIT_CONFIG_KEY_1" not in env
+        got = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
+               for i in range(2, int(env["GIT_CONFIG_COUNT"]))}
+        assert got == dict(gitutil.SAFE_GIT_CONFIG)
+        assert gitutil.git_config_env((("x.y", "z"),), base={"GIT_CONFIG_COUNT": "junk"})["GIT_CONFIG_COUNT"] == "1"
+
     def test_subagent_stop_same_repo_with_project_dir_reviews(self, workspace, hook_env, stub_api):
         ws, repo = workspace
         (repo / "pkg").mkdir()
@@ -519,7 +604,7 @@ class TestStop:
         ws, repo = workspace
         run_hook(ups_payload(ws), hook_env)
         self._touch(ws, repo, hook_env)
-        run_hook(stop_payload(ws, event="SubagentStop"), hook_env)
+        run_hook(stop_payload(ws), hook_env)
         (repo / "app.py").write_text(VULN_PY + "\n# more\n")
         run_hook(ups_payload(ws, session_id="s1"), hook_env)
         state = _read_state(hook_env)

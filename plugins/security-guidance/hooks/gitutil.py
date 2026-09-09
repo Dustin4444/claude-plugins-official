@@ -39,6 +39,29 @@ GIT_CMD = [
     "-c", "core.quotePath=false",
 ]
 
+SAFE_GIT_CONFIG = (
+    ("core.fsmonitor", "false"),
+    ("core.hooksPath", "/dev/null"),
+)
+
+
+def git_config_env(pairs, base=None):
+    base = os.environ if base is None else base
+    try:
+        n = max(0, int(base.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        n = 0
+    env = {}
+    for i, (k, v) in enumerate(pairs, start=n):
+        env[f"GIT_CONFIG_KEY_{i}"] = k
+        env[f"GIT_CONFIG_VALUE_{i}"] = v
+    env["GIT_CONFIG_COUNT"] = str(n + len(pairs))
+    return env
+
+
+def apply_safe_git_env():
+    os.environ.update(git_config_env(SAFE_GIT_CONFIG))
+
 
 def _git_rev_parse_head(cwd):
     """Return the current HEAD SHA, or None if not a git repo / no commits."""

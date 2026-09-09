@@ -97,7 +97,7 @@ from session_state import (  # noqa: E402,F401
     load_state, save_state, with_locked_state,
 )
 from gitutil import (  # noqa: E402,F401
-    GIT_CMD,
+    GIT_CMD, apply_safe_git_env,
     _git_rev_parse_head, _find_git_index, _diff_pathspec, _temp_index,
     _git_toplevel, _git_dir, _git_rev_list_range, _git_diff_range,
     _detect_main_branch, _git_reflog_recent_commits, _git_name_only,
@@ -695,7 +695,7 @@ _GIT_COMMIT_RE = re.compile(
     # _GIT_PUSH_RE). Without this, `git -C /repo commit` is silently dropped
     # by the handler — see #2089's secondary finding. The gt branch has no
     # global-option layer to worry about.
-    r'\bgit(?:\s+-[Cc]\s+(?:"[^"]*"|\'[^\']*\'|\S+)|\s+--\S+=\S+'
+    r'\bgit(?:\s+-[Cc]\s+(?:"[^"]*"|\'[^\']*\'|[^\s"\']\S*)|\s+--[^\s=]+=\S+'
     r'|\s+--(?:git-dir|work-tree)\s+\S+)*\s+commit\b'
     r'|\bgt\s+(?:create|modify)\b'
 )
@@ -739,7 +739,7 @@ COMMIT_REVIEW_RATE_WINDOW_S = int(
 # but the bash hook fires on Claude's top-level command so we need to
 # recognize gt submit at the matcher level. See #2048.
 _GIT_PUSH_RE = re.compile(
-    r'(?:\bgit(?:\s+-[cC]\s+(?:"[^"]*"|\'[^\']*\'|\S+)|\s+--\S+=\S+'
+    r'(?:\bgit(?:\s+-[cC]\s+(?:"[^"]*"|\'[^\']*\'|[^\s"\']\S*)|\s+--[^\s=]+=\S+'
     r'|\s+--(?:git-dir|work-tree)\s+\S+)*\s+push\b|\bgt\s+submit\b)'
 )
 
@@ -1177,7 +1177,8 @@ def handle_commit_review_posttooluse(input_data):
         sys.exit(0)
     if repo_res != RES_CWD:
         debug_log(f"Commit review: repo resolved via {repo_res} -> {repo_root!r}")
-        save_repo_hint(session_id, repo_root)
+        if repo_res in (RES_COMMAND, RES_TOUCHED_PATHS):
+            save_repo_hint(session_id, repo_root)
 
     # Pin the review to the exact SHA the Bash command produced, parsed from
     # its stdout. Reviewing HEAD instead is wrong when the commit was made in
@@ -1612,7 +1613,8 @@ def handle_push_sweep_posttooluse(input_data):
         sys.exit(0)
     if repo_res != RES_CWD:
         debug_log(f"Push sweep: repo resolved via {repo_res} -> {repo_root!r}")
-        save_repo_hint(session_id, repo_root)
+        if repo_res in (RES_COMMAND, RES_TOUCHED_PATHS):
+            save_repo_hint(session_id, repo_root)
 
     # Guard: the sweep diffs `base..HEAD` and the agent Reads the working
     # tree, so the pushed ref MUST be HEAD or the review is of the wrong
@@ -1991,13 +1993,8 @@ def handle_stop_hook(input_data):
 
     repo_cwd, repo_res = resolve_repo_root(
         cwd, touched_paths=touched_paths, session_id=session_id)
-    res_metrics = {}
-    if repo_res != RES_CWD:
-        res_metrics = {"cwd_is_repo": False, "repo_resolution": repo_res}
-        if repo_cwd:
-            debug_log(f"Stop hook: repo resolved via {repo_res} -> {repo_cwd!r}")
-            save_repo_hint(session_id, repo_cwd)
-            cwd = repo_cwd
+    res_metrics = ({} if repo_res == RES_CWD
+                   else {"cwd_is_repo": False, "repo_resolution": repo_res})
     if is_subagent and repo_cwd:
         _pd = os.environ.get("CLAUDE_PROJECT_DIR")
         _pd_root = _git_toplevel(_pd) if _pd and os.path.isdir(_pd) else None
@@ -2005,6 +2002,11 @@ def handle_stop_hook(input_data):
             debug_log(f"Stop hook: SubagentStop in {repo_cwd!r}, session repo is {_pd_root!r}")
             v2_metrics = dict(res_metrics)
             _skip(11)
+    if repo_res != RES_CWD and repo_cwd:
+        debug_log(f"Stop hook: repo resolved via {repo_res} -> {repo_cwd!r}")
+        if not is_subagent and repo_res in (RES_COMMAND, RES_TOUCHED_PATHS):
+            save_repo_hint(session_id, repo_cwd)
+        cwd = repo_cwd
 
     review_paths, diff_base, repo_root, untracked, v2_metrics = compute_v2_review_set(
         cwd, baseline_sha, head_at_capture, untracked_at_baseline
@@ -2250,6 +2252,7 @@ def _maybe_bootstrap_agent_sdk_async():
 def main():
     """Main hook function."""
     debug_log(f"Hook called with args: {sys.argv}")
+    apply_safe_git_env()
 
     # Master kill switch — honors ENABLE_SECURITY_REMINDER=0 (legacy) and
     # SECURITY_GUIDANCE_DISABLE=1 (clearer name, no double negative). Emit
