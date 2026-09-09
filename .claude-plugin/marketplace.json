@@ -503,7 +503,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/microsoft/azure-skills.git",
-        "sha": "2fe0f02665574305657c6e79a619c6b9554e53dc"
+        "sha": "bc9939f8ca1ae8e3da8e6ae647e0d1d22e3a424a"
       },
       "homepage": "https://github.com/microsoft/azure-skills"
     },
