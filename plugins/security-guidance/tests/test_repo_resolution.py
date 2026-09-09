@@ -1,10 +1,12 @@
 import json
 import os
+import threading
+import time
 
 import pytest
 
 from conftest import (
-    HOOKS_DIR, VULN_PY, bash_payload, commit_file, edit_payload, git,
+    HOOKS_DIR, STUB_VULN, VULN_PY, bash_payload, commit_file, edit_payload, git,
     make_repo, metrics_of, run_hook, stop_payload, ups_payload,
 )
 
@@ -86,6 +88,14 @@ class TestDirsFromCommand:
         (repo / "pkg").mkdir()
         assert rr.toplevel_from_command("cd sub/pkg && git commit -m x", str(ws)) == str(repo)
 
+    def test_windows_backslash_paths_survive_tokenizing(self, workspace, monkeypatch):
+        ws, _ = workspace
+        monkeypatch.setattr(rr.os, "sep", "\\")
+        toks = rr._tokenize(r'git -C C:\Users\me\repo commit -m x && git -C "D:\a b\r" push')
+        assert r"C:\Users\me\repo" in toks and r"D:\a b\r" in toks
+        toks = rr._tokenize(r"git -C \\srv\share\repo commit -m x")
+        assert r"\\srv\share\repo" in toks
+
 
 class TestShaScan:
     def test_finds_repo_containing_commit(self, workspace):
@@ -142,6 +152,22 @@ class TestResolveRepoRoot:
         ws, repo = workspace
         assert rr.resolve_repo_root(str(repo), "cd /tmp && git commit") == (str(repo), rr.RES_CWD)
 
+    def test_cwd_is_repo_same_repo_in_command_stays_cwd(self, workspace):
+        ws, repo = workspace
+        (repo / "pkg").mkdir()
+        for cmd in ("git commit -m x", "cd pkg && git commit -m x", f"git -C {repo} commit -m x",
+                    "git -C pkg commit -m x", "git -C nope commit -m x"):
+            assert rr.resolve_repo_root(str(repo), cmd, rr.COMMIT_SUBCOMMANDS) == (str(repo), rr.RES_CWD), cmd
+
+    def test_explicit_other_repo_in_command_beats_cwd(self, workspace):
+        ws, repo = workspace
+        other = make_repo(ws / "other")
+        assert rr.resolve_repo_root(str(repo), f"git -C {other} commit -m x", rr.COMMIT_SUBCOMMANDS) == (str(other), rr.RES_COMMAND)
+        assert rr.resolve_repo_root(str(repo), "git -C ../other push", rr.PUSH_SUBCOMMANDS) == (str(other), rr.RES_COMMAND)
+        assert rr.resolve_repo_root(str(repo), "cd ../other && git commit -m x", rr.COMMIT_SUBCOMMANDS) == (str(other), rr.RES_COMMAND)
+        assert rr.resolve_repo_root(str(repo), "git --git-dir=../other/.git --work-tree=../other commit -m x", rr.COMMIT_SUBCOMMANDS) == (str(other), rr.RES_COMMAND)
+        assert rr.resolve_repo_root(str(repo), f"git -C {other} status && git commit -m x", rr.COMMIT_SUBCOMMANDS) == (str(repo), rr.RES_CWD)
+
     def test_order_command_then_paths_then_sha(self, workspace):
         ws, repo = workspace
         other = make_repo(ws / "other")
@@ -189,7 +215,7 @@ class TestHooksJson:
             cfg["hooks"]["Stop"][0]["hooks"][0]["command"]
         bash = [g for g in cfg["hooks"]["PostToolUse"] if g.get("matcher") == "Bash"][0]
         ifs = {h.get("if") for h in bash["hooks"]}
-        assert {"Bash(git commit:*)", "Bash(git push:*)", "Bash(git -C * commit*)",
+        assert {"Bash(git commit:*)", "Bash(git push:*)", "Bash(git -C * commit *)",
                 "Bash(git -C * push*)", "Bash(gt create:*)", "Bash(gt modify:*)",
                 "Bash(gt submit:*)"} <= ifs
 
@@ -213,6 +239,28 @@ class TestCommitReview:
         assert "cwd_is_repo" not in m and "repo_resolution" not in m
         assert m.get("files_reviewed") == 1 and m.get("skip_reason") is None
         assert stub_api.calls
+
+    def test_cwd_is_repo_cd_subdir_unchanged(self, workspace, hook_env, stub_api):
+        ws, repo = workspace
+        (repo / "pkg").mkdir()
+        sha, out = commit_file(repo, "pkg/app.py", VULN_PY)
+        rc, so, se = run_hook(bash_payload(repo, "cd pkg && git commit -m change", out), hook_env)
+        m = metrics_of(so)
+        assert "cwd_is_repo" not in m and "repo_resolution" not in m
+        assert m.get("files_reviewed") == 1 and m.get("skip_reason") is None
+
+    def test_cwd_is_repo_dash_C_other_repo_reviews_other_repo(self, workspace, hook_env, stub_api):
+        ws, repo = workspace
+        other = make_repo(ws / "other")
+        sha, out = commit_file(other, "srv.py", VULN_PY)
+        rc, so, se = run_hook(bash_payload(repo, f"git -C {other} commit -m change", out), hook_env)
+        m = metrics_of(so)
+        assert m.get("skip_reason") is None, m
+        assert "cwd_is_repo" not in m and m["repo_resolution"] == rr.RES_COMMAND
+        assert m["files_reviewed"] == 1
+        assert stub_api.calls
+        assert (other / ".git" / "sg-reviewed-shas").exists()
+        assert not (repo / ".git" / "sg-reviewed-shas").exists()
 
     def test_workspace_cwd_cd_sub(self, workspace, hook_env, stub_api):
         ws, repo = workspace
@@ -320,6 +368,22 @@ class TestPushSweep:
         assert m.get("skip_reason") != 26
         assert m.get("pushed") == 1
 
+    def test_cwd_is_repo_dash_C_other_repo(self, workspace, hook_env, tmp_path):
+        ws, repo = workspace
+        other = make_repo(ws / "other")
+        remote = tmp_path / "remote.git"
+        git(ws, "init", "-q", "--bare", str(remote))
+        git(other, "remote", "add", "origin", str(remote))
+        git(other, "push", "-q", "-u", "origin", "main")
+        base = git(other, "rev-parse", "HEAD").strip()
+        sha, _ = commit_file(other, "srv.py", VULN_PY)
+        git(other, "push", "-q", "origin", "main")
+        push_stdout = f"To {remote}\n   {base[:7]}..{sha[:7]}  main -> main\n"
+        rc, so, se = run_hook(bash_payload(repo, f"git -C {other} push origin main", push_stdout), hook_env)
+        m = metrics_of(so)
+        assert m["push_sweep"] is True and "cwd_is_repo" not in m
+        assert m["repo_resolution"] == rr.RES_COMMAND and m.get("pushed") == 1
+
 
 class TestStop:
     def _touch(self, ws, repo, hook_env, session_id="s1"):
@@ -347,20 +411,109 @@ class TestStop:
         assert m["files_reviewed"] == 1 and m["review_set_count"] == 1
         assert stub_api.calls
 
-    def test_subagent_stop_is_handled_and_advances_baseline(self, workspace, hook_env, stub_api):
+    def test_subagent_stop_reviews_without_consuming_session_state(self, workspace, hook_env, stub_api):
         ws, repo = workspace
         run_hook(ups_payload(ws), hook_env)
         self._touch(ws, repo, hook_env)
+        before = _read_state(hook_env)
         rc, so, se = run_hook(stop_payload(ws, event="SubagentStop"), hook_env)
         m = metrics_of(so)
         assert m.get("skip_reason") is None, m
         assert m["repo_resolution"] == rr.RES_TOUCHED_PATHS and m["files_reviewed"] == 1
+        after = _read_state(hook_env)
+        assert after["touched_paths"] == before["touched_paths"] != []
+        assert after.get("baseline_sha") == before.get("baseline_sha")
+        assert after.get("reviewed_diff_hash")
         n_calls = len(stub_api.calls)
         rc, so, se = run_hook(stop_payload(ws), hook_env)
         m2 = metrics_of(so)
-        assert m2["skip_reason"] in (6, 9), m2
-        assert m2["repo_resolution"] == rr.RES_HINT
+        assert m2["skip_reason"] == 12, m2
+        assert m2["repo_resolution"] == rr.RES_TOUCHED_PATHS
         assert len(stub_api.calls) == n_calls
+        final = _read_state(hook_env)
+        assert final["touched_paths"] == [] and "reviewed_diff_hash" not in final
+
+    def test_main_edits_during_subagent_review_are_reviewed_at_stop(self, workspace, hook_env, stub_api):
+        ws, repo = workspace
+        run_hook(ups_payload(repo), hook_env)
+        self._touch(repo, repo, hook_env)
+        stub_api.delay = 3
+        res = {}
+        t = threading.Thread(target=lambda: res.update(
+            sub=run_hook(stop_payload(repo, event="SubagentStop"), hook_env)))
+        t.start()
+        time.sleep(1.5)
+        (repo / "b.py").write_text("import os\nos.system(input())\n")
+        run_hook(edit_payload(repo, repo / "b.py", "x"), hook_env)
+        t.join()
+        stub_api.delay = 0
+        m_sub = metrics_of(res["sub"][1])
+        assert m_sub.get("skip_reason") is None and m_sub["files_reviewed"] == 1, m_sub
+        n_calls = len(stub_api.calls)
+        rc, so, se = run_hook(stop_payload(repo), hook_env)
+        m = metrics_of(so)
+        assert m.get("skip_reason") is None, m
+        assert m["files_reviewed"] == 2 and m["touched_paths_count"] == 2
+        assert len(stub_api.calls) > n_calls
+
+    def test_subagent_stop_findings_do_not_advance_baseline_or_fire_count(self, workspace, hook_env, stub_api):
+        ws, repo = workspace
+        run_hook(ups_payload(repo), hook_env)
+        self._touch(repo, repo, hook_env)
+        before = _read_state(hook_env)
+        stub_api.vulns = [STUB_VULN]
+        rc, so, se = run_hook(stop_payload(repo, event="SubagentStop"), hook_env)
+        m = metrics_of(so)
+        assert rc == 2 and m["vulns_found"] == 1, (rc, m)
+        assert "repo_resolution" not in m and "cwd_is_repo" not in m
+        after = _read_state(hook_env)
+        assert after.get("baseline_sha") == before.get("baseline_sha")
+        assert not after.get("stop_hook_fire_count")
+        assert after["touched_paths"] == before["touched_paths"]
+        assert len(after.get("previous_findings", [])) == 1 and after.get("reviewed_diff_hash")
+        rc, so, se = run_hook(stop_payload(repo), hook_env)
+        assert metrics_of(so)["skip_reason"] == 12
+        (repo / "app.py").write_text(VULN_PY + "x = 1\n")
+        run_hook(edit_payload(repo, repo / "app.py", "x"), hook_env)
+        rc, so, se = run_hook(stop_payload(repo), hook_env)
+        m3 = metrics_of(so)
+        assert rc == 2 and m3.get("skip_reason") is None and m3["files_reviewed"] == 1, m3
+        assert _read_state(hook_env)["stop_hook_fire_count"] == 1
+
+    def test_subagent_stop_in_other_worktree_is_skipped(self, workspace, hook_env, stub_api, tmp_path):
+        ws, repo = workspace
+        wt = tmp_path / "wt"
+        git(repo, "worktree", "add", "-q", "-b", "agent", str(wt))
+        run_hook(ups_payload(repo), hook_env)
+        self._touch(repo, repo, hook_env)
+        before = _read_state(hook_env)
+        (wt / "new.py").write_text("import pickle\npickle.loads(b)\n")
+        run_hook(edit_payload(wt, wt / "new.py", "x"), hook_env)
+        env = {**hook_env, "CLAUDE_PROJECT_DIR": str(repo)}
+        rc, so, se = run_hook(stop_payload(wt, event="SubagentStop"), env)
+        m = metrics_of(so)
+        assert m["skip_reason"] == 11, m
+        assert not stub_api.calls
+        after = _read_state(hook_env)
+        assert after.get("baseline_sha") == before.get("baseline_sha")
+        assert after.get("head_at_capture") == before.get("head_at_capture")
+        rc, so, se = run_hook(stop_payload(repo), env)
+        m2 = metrics_of(so)
+        assert m2.get("skip_reason") is None and m2["files_reviewed"] == 1, m2
+
+    def test_subagent_stop_same_repo_with_project_dir_reviews(self, workspace, hook_env, stub_api):
+        ws, repo = workspace
+        (repo / "pkg").mkdir()
+        run_hook(ups_payload(repo), hook_env)
+        self._touch(repo, repo, hook_env)
+        env = {**hook_env, "CLAUDE_PROJECT_DIR": str(repo)}
+        rc, so, se = run_hook(stop_payload(repo / "pkg", event="SubagentStop"), env)
+        m = metrics_of(so)
+        assert m.get("skip_reason") is None and m["files_reviewed"] == 1, m
+        env_ws = {**hook_env, "CLAUDE_PROJECT_DIR": str(ws)}
+        (repo / "app.py").write_text(VULN_PY + "y = 2\n")
+        rc, so, se = run_hook(stop_payload(repo, event="SubagentStop"), env_ws)
+        assert metrics_of(so).get("skip_reason") is None
 
     def test_ups_uses_hint_for_baseline(self, workspace, hook_env):
         ws, repo = workspace

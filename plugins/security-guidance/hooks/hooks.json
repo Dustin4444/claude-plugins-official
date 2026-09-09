@@ -45,7 +45,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sg-python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/security_reminder_hook.py\"",
-            "if": "Bash(git -C * commit*)",
+            "if": "Bash(git -C * commit *)",
             "asyncRewake": true,
             "rewakeMessage": "Background security review of commit — address or acknowledge the findings below, then continue with the user's original request or continue waiting for their reply:",
             "rewakeSummary": "Commit security review found issues"

@@ -47,6 +47,8 @@ def _is_sep(tok):
 
 
 def _tokenize(command):
+    if os.sep == "\\":
+        command = command.replace("\\", "\\\\")
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
         lex.whitespace_split = True
@@ -140,8 +142,11 @@ def dirs_from_command(command, cwd, subcommands=None):
     return list(dict.fromkeys(d for d in out if d))
 
 
-def toplevel_from_command(command, cwd, subcommands=None):
+def toplevel_from_command(command, cwd, subcommands=None, cwd_root=None):
+    cwd_abs = _abs(None, cwd) if cwd else None
     for d in dirs_from_command(command, cwd, subcommands):
+        if cwd_root and d == cwd_abs:
+            return cwd_root
         try:
             if os.path.isdir(d):
                 top = _git_toplevel(d)
@@ -274,15 +279,19 @@ def load_repo_hint(session_id):
     return None
 
 
+_UNSET = object()
+
+
 def resolve_repo_root(cwd, command=None, subcommands=None, sha=None,
-                      touched_paths=None, session_id=None):
-    cwd_root = _git_toplevel(cwd) if cwd else None
+                      touched_paths=None, session_id=None, cwd_root=_UNSET):
+    if cwd_root is _UNSET:
+        cwd_root = _git_toplevel(cwd) if cwd else None
+    if command:
+        top = toplevel_from_command(command, cwd, subcommands, cwd_root)
+        if top and top != cwd_root:
+            return top, RES_COMMAND
     if cwd_root:
         return cwd_root, RES_CWD
-    if command:
-        top = toplevel_from_command(command, cwd, subcommands)
-        if top:
-            return top, RES_COMMAND
     if touched_paths:
         tops = repos_from_paths(touched_paths, cwd)
         if tops:

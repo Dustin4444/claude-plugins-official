@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -78,12 +79,15 @@ class _Stub(http.server.BaseHTTPRequestHandler):
         if n:
             self.rfile.read(n)
         self.server.calls.append(self.path)
+        if self.server.delay:
+            time.sleep(self.server.delay)
         if self.server.status == 200:
+            vulns = list(self.server.vulns)
             body = json.dumps({
                 "id": "msg_stub", "type": "message", "role": "assistant",
                 "model": "stub", "stop_reason": "end_turn",
                 "content": [{"type": "text", "text": json.dumps(
-                    {"hasVulnerabilities": False, "vulnerabilities": []})}],
+                    {"hasVulnerabilities": bool(vulns), "vulnerabilities": vulns})}],
                 "usage": {"input_tokens": 1, "output_tokens": 1},
             }).encode()
         else:
@@ -105,6 +109,8 @@ def stub_api():
     srv = http.server.HTTPServer(("127.0.0.1", 0), _Stub)
     srv.calls = []
     srv.status = 200
+    srv.delay = 0
+    srv.vulns = []
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     try:
@@ -143,6 +149,13 @@ def run_hook(payload, env, python=sys.executable):
         capture_output=True, text=True, env=env, timeout=120,
     )
     return r.returncode, r.stdout, r.stderr
+
+
+STUB_VULN = {
+    "filePath": "app.py", "category": "command_injection", "severity": "high",
+    "vulnerableCode": "subprocess.call('ls ' + user, shell=True)",
+    "description": "user input reaches a shell", "recommendation": "pass an argv list",
+}
 
 
 def metrics_of(stdout):
