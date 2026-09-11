@@ -2755,7 +2755,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/gitroomhq/postiz-agent.git",
-        "sha": "6d3be9c0aec768075e91b4a29b04fb624d72d942"
+        "sha": "51293500c1b1fb447205100cb09b2999085323ac"
       },
       "homepage": "https://postiz.com/agent"
     },
