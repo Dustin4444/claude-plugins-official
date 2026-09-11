@@ -1516,7 +1516,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/figma/mcp-server-guide.git",
-        "sha": "ae7e5e5f80da20f1dd7445e0c6ae5ac58a5b0bce"
+        "sha": "f74a51c9aaec87a2e65c9121753b63fb42203d96"
       },
       "homepage": "https://github.com/figma/mcp-server-guide"
     },
